@@ -23,6 +23,25 @@ import java.util.Locale
 import kotlin.concurrent.thread
 
 class MainActivity : AppCompatActivity() {
+    private var pendingMediaUri: android.net.Uri? = null
+
+    private val galleryPicker = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            pendingMediaUri = uri
+            try {
+                contentResolver.takePersistableUriPermission(
+                    uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {}
+            android.widget.Toast.makeText(
+                this, "Media منتخب ہو گیا۔ اب سوال لکھ کر Send دبائیں۔",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
   private lateinit var p: SharedPreferences
   private lateinit var tts: TextToSpeech
   private lateinit var msgs: LinearLayout
@@ -85,6 +104,16 @@ class MainActivity : AppCompatActivity() {
   }
 
   private fun send(text: String) {
+        val attachedUri = pendingMediaUri
+        if (text.isBlank() && attachedUri != null) {
+            android.widget.Toast.makeText(
+                this, "میڈیا منتخب ہے؛ پہلے سوال لکھیں۔",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+        if (attachedUri != null) pendingMediaUri = null
+
     if (text.isBlank()) return
     Gem.stopSpeak()
     bubble(text, true); hist.add(Pair("user", text))
@@ -92,7 +121,10 @@ class MainActivity : AppCompatActivity() {
     thread {
       var h: List<Pair<String, String>> = hist.takeLast(20)
       while (h.isNotEmpty() && h[0].first != "user") h = h.drop(1)
-      val r = Gem.ask(this, Gem.chatSys(this), h)
+      val r = if (attachedUri != null)
+                    MediaGem.ask(this, Gem.chatSys(this), h, attachedUri, text)
+                else
+                    Gem.ask(this, Gem.chatSys(this), h)
       runOnUiThread { msgs.removeView(th) }
       if (r == null) { hist.removeAt(hist.size - 1); bubble("ابھی جواب نہیں مل سکا، دوبارہ کوشش کریں۔", false); return@thread }
       val out = ArrayList<String>()
@@ -167,7 +199,24 @@ class MainActivity : AppCompatActivity() {
     scroll = ScrollView(this); scroll.addView(msgs)
     val inp = edit("پیغام لکھیں", "__t", ""); inp.background = glass(26)
     val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), dp(6), dp(10), dp(10)) }
+    val galleryButton = android.widget.Button(this).apply {
+        text = "＋"
+        textSize = 22f
+        isAllCaps = false
+        minWidth = 0
+        setOnClickListener {
+            galleryPicker.launch(arrayOf("image/*", "video/*"))
+        }
+    }
     row.addView(inp, LinearLayout.LayoutParams(0, WRAP, 1f))
+    row.addView(
+        galleryButton,
+        LinearLayout.LayoutParams(
+            (46 * resources.displayMetrics.density).toInt(),
+            (48 * resources.displayMetrics.density).toInt()
+        )
+    )
+
     row.addView(btn("🎤", CYAN, VIOLET) {
       try {
         speechL.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM).putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ur-PK"))

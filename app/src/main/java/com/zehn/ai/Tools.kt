@@ -57,6 +57,35 @@ object Tools {
   private fun exec(a: Activity, name: String, arg: String): String {
     val p = prefs(a)
     when (name) {
+      "workspace_new_project" -> {
+        val (n, type) = split2(arg)
+        return Workspace.newProject(a, n, type.ifBlank { "code" })
+      }
+      "workspace_mkdir" -> return Workspace.mkdir(a, arg)
+      "workspace_list" -> return Workspace.list(a, arg)
+      "workspace_read" -> return Workspace.read(a, arg)
+      "workspace_write" -> {
+        val (path, content) = split2(arg)
+        return Workspace.write(a, path, content)
+      }
+      "workspace_preview" -> {
+        val f = Workspace.resolve(a, arg) ?: return "غلط فائل کا راستہ"
+        if (!f.isFile || !f.name.endsWith(".html", true)) return "صرف HTML فائل Preview ہو سکتی ہے"
+        a.startActivity(Intent(a, PreviewActivity::class.java).putExtra("file", arg))
+        return "Preview کھول دیا"
+      }
+      "workspace_delete" -> {
+        val f = Workspace.resolve(a, arg) ?: return "غلط راستہ"
+        if (!f.exists()) return "فائل یا فولڈر نہیں ملا"
+        a.runOnUiThread {
+          AlertDialog.Builder(a)
+            .setMessage("کیا واقعی یہ فائل یا فولڈر حذف کرنا ہے؟\\n${f.name}")
+            .setPositiveButton("حذف کریں") { _, _ -> a.runOnUiThread { android.widget.Toast.makeText(a, Workspace.delete(a, arg), android.widget.Toast.LENGTH_LONG).show() } }
+            .setNegativeButton("منسوخ", null)
+            .show()
+        }
+        return "حذف کرنے کی تصدیق درکار ہے"
+      }
       "open_app" -> {
         val pm = a.packageManager
         var pk: String? = PK[arg.lowercase().trim()]
