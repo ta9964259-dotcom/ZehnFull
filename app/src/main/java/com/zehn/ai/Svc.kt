@@ -60,7 +60,7 @@ class Svc : NotificationListenerService() {
     thread {
       val h = synchronized(hist) { hist.getOrPut(who) { mutableListOf() } }
       h.add(Pair("user", msg))
-      var sys = (p.getString("sys", "") ?: "") + "\n" + Gem.MODE_TXT[p.getInt("mode", 0).coerceIn(0, Gem.MODE_TXT.size - 1)]
+      var sys = (p.getString("sys", "") ?: "") + "\n" + Gem.MODE_TXT[p.getInt("wamode", 0).coerceIn(0, Gem.MODE_TXT.size - 1)]
       sys += "\nCurrent time: " + Date() + ". You are replying on WhatsApp on behalf of the owner to " + who + ". Reply briefly like a human, in the sender's language."
       val busy = p.getString("busy", "") ?: ""
       if (busy.isNotBlank()) sys += "\nOwner status: " + busy + ". Mention it politely."

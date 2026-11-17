@@ -1,5 +1,9 @@
 package com.zehn.ai
 import android.content.Context
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
+import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -23,6 +27,8 @@ object Gem {
 ACTION: {"tool":"NAME","arg":"VALUE"}
 Tools: open_app(app name), youtube(search text), search(search text), open_url(url), call(contact name or number), sms("contact|text"), whatsapp("contact|text"), torch(on/off), battery(""), clipboard(text), vibrate(""), remember(fact), websearch(question; for current info), weather(city), alarm("HH:MM|label" in 24h), timer("seconds|label"), remind("minutes|text"), note(text), todo_add(text), todo_list(""), todo_done(number), briefing("").
 After the ACTION line(s) add a short natural reply."""
+
+  @Volatile private var cur: AudioTrack? = null
 
   private fun post(key: String, url: String, body: JSONObject?): String? = try {
     val cn = URL(url).openConnection() as HttpURLConnection
@@ -85,11 +91,73 @@ After the ACTION line(s) add a short natural reply."""
 
   fun chatSys(ctx: Context): String {
     val p = ctx.getSharedPreferences("zehn", 0)
-    var s = "You are ${p.getString("name", "Zehn")}, a smart AI assistant of ${p.getString("owner", "Tanveer Abbas")}. Reply in the same language/script the user writes (Urdu by default).\n"
+    var s = "You are ${p.getString("name", "Naira")}, a female AI assistant (a girl) of ${p.getString("owner", "Tanveer Abbas")}. Always use feminine grammar when speaking about yourself. " +
+      "Always write Urdu in Urdu script. Never use Roman Urdu or Hindi/Devanagari script unless the user writes that way. Do not use markdown (no ** and no #). Keep replies short and natural.\n" +
+      "You live inside an Android app with: this chat, the phone tools below, voice, and a background WhatsApp auto-reply feature that reads incoming WhatsApp notifications and replies automatically (the user turns it on in the WhatsApp tab). Never claim you cannot do these.\n"
     s += MODE_TXT[p.getInt("mode", 0).coerceIn(0, MODE_TXT.size - 1)] + "\n"
     s += "Current time: " + SimpleDateFormat("EEEE dd MMMM yyyy hh:mm a", Locale.US).format(Date()) + "\n"
     val f = p.getString("facts", "") ?: ""
     if (f.isNotBlank()) s += "Known facts about the user: " + f.trim().replace("\n", "; ") + "\n"
     return s + TOOLS
+  }
+
+  fun stopSpeak() { try { cur?.stop(); cur?.release() } catch (e: Exception) {}; cur = null }
+
+  private fun findTts(ctx: Context): String? = try {
+    val p = ctx.getSharedPreferences("zehn", 0)
+    val t = post(p.getString("key", "") ?: "", "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200", null)
+    val arr = JSONObject(t ?: "").getJSONArray("models")
+    val l = ArrayList<String>()
+    for (i in 0 until arr.length()) {
+      val o = arr.getJSONObject(i); val n = o.getString("name").substringAfterLast("/")
+      val ok = o.optJSONArray("supportedGenerationMethods")?.toString()?.contains("generateContent") == true
+      if (n.contains("tts") && ok) l.add(n)
+    }
+    l.sortBy { if (it.contains("flash")) 0 else 1 }
+    l.firstOrNull()
+  } catch (e: Exception) { null }
+
+  private fun ttsCall(key: String, model: String, voice: String, text: String): ByteArray? = try {
+    val body = JSONObject()
+      .put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", "Say warmly in a sweet natural female voice: " + text)))))
+      .put("generationConfig", JSONObject()
+        .put("responseModalities", JSONArray().put("AUDIO"))
+        .put("speechConfig", JSONObject().put("voiceConfig", JSONObject().put("prebuiltVoiceConfig", JSONObject().put("voiceName", voice)))))
+    val t = post(key, "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent", body)
+    val d = JSONObject(t ?: "").getJSONArray("candidates").getJSONObject(0).getJSONObject("content")
+      .getJSONArray("parts").getJSONObject(0).getJSONObject("inlineData").getString("data")
+    Base64.decode(d, Base64.DEFAULT)
+  } catch (e: Exception) { null }
+
+  fun speak(ctx: Context, text: String): Boolean {
+    try {
+      val p = ctx.getSharedPreferences("zehn", 0)
+      val key = p.getString("key", "") ?: ""
+      val voice = p.getString("vname", "Kore") ?: "Kore"
+      var model = p.getString("ttsmodel", "") ?: ""
+      if (model.isEmpty()) { model = findTts(ctx) ?: "gemini-3.1-flash-tts-preview"; p.edit().putString("ttsmodel", model).apply() }
+      var pcm = ttsCall(key, model, voice, text)
+      if (pcm == null) {
+        val m2 = findTts(ctx)
+        if (m2 != null && m2 != model) { pcm = ttsCall(key, m2, voice, text); if (pcm != null) p.edit().putString("ttsmodel", m2).apply() }
+      }
+      if (pcm == null) return false
+      play(pcm)
+      return true
+    } catch (e: Exception) { return false }
+  }
+
+  private fun play(pcm: ByteArray) {
+    stopSpeak()
+    val frames = pcm.size / 2
+    val at = AudioTrack.Builder()
+      .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+      .setAudioFormat(AudioFormat.Builder().setSampleRate(24000).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
+      .setBufferSizeInBytes(pcm.size).setTransferMode(AudioTrack.MODE_STATIC).build()
+    at.write(pcm, 0, pcm.size); cur = at; at.play()
+    var n = 0
+    while (n < 600 && cur === at && at.playbackHeadPosition < frames) { Thread.sleep(100); n++ }
+    try { at.release() } catch (e: Exception) {}
+    if (cur === at) cur = null
   }
 }
